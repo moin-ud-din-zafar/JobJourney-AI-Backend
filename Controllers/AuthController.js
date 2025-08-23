@@ -1,6 +1,8 @@
+// controllers/authController.js
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const User = require('../models/user');
+const Profile = require('../models/profile'); // new
 const { signToken } = require('../services/jwtService');
 const { isEmail, isStrongPassword } = require('../utils/validators');
 const { sendVerificationEmail } = require('../services/emailService');
@@ -8,7 +10,7 @@ const { sendVerificationEmail } = require('../services/emailService');
 const SALT_ROUNDS = 10;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5174';
 
-// SIGNUP - create local user, send verification email
+// SIGNUP - create local user, send verification email, create blank Profile
 async function signup(req, res, next) {
   try {
     const { first, last, email, password } = req.body;
@@ -26,8 +28,18 @@ async function signup(req, res, next) {
       lastName: last || '',
       email: email.toLowerCase(),
       password: hashed,
-      isVerified: false,  // Initially, the user is not verified
+      isVerified: false,
     });
+
+    // create (blank) Profile and link it
+    try {
+      const profile = await Profile.create({ user: localUser._id });
+      localUser.profile = profile._id;
+      await localUser.save();
+    } catch (profileErr) {
+      // log but don't block signup — profile can be created later
+      console.warn('Failed to create profile on signup:', profileErr);
+    }
 
     // Generate verification token and set expiration (24 hours)
     const verificationToken = crypto.randomBytes(32).toString('hex');
@@ -67,6 +79,7 @@ async function login(req, res, next) {
     if (!match) return res.status(401).json({ error: 'Invalid credentials' });
 
     const token = signToken({ sub: user._id });
+
     const safeUser = {
       id: user._id,
       email: user.email,
@@ -74,6 +87,8 @@ async function login(req, res, next) {
       lastName: user.lastName,
       createdAt: user.createdAt
     };
+
+    // Return token + minimal user; the frontend AuthContext will call /auth/me to get full profile
     res.json({ user: safeUser, token });
   } catch (err) {
     console.error('Login error:', err);
@@ -81,7 +96,7 @@ async function login(req, res, next) {
   }
 }
 
-// VERIFY - email verification endpoint (improved logging + XHR support)
+// VERIFY - email verification endpoint
 async function verify(req, res, next) {
   try {
     const token = req.query.token || req.body.token;
@@ -90,14 +105,12 @@ async function verify(req, res, next) {
       return res.status(400).json({ error: 'Missing token' });
     }
 
-    // Find user by token
     const user = await User.findOne({ verificationToken: token }).exec();
     if (!user) {
       console.log('verify: No user found with that token');
       return res.status(400).json({ error: 'Invalid or expired token' });
     }
 
-    // Check if token is expired
     const now = new Date();
     if (new Date(user.verificationTokenExpires) <= now) {
       console.log('verify: Token expired at', user.verificationTokenExpires);
@@ -109,7 +122,6 @@ async function verify(req, res, next) {
       return res.status(400).json({ error: 'User already verified' });
     }
 
-    // Mark user as verified and clear token
     user.isVerified = true;
     user.verificationToken = undefined;
     user.verificationTokenExpires = undefined;
@@ -140,13 +152,11 @@ async function resendVerification(req, res, next) {
 
     if (user.isVerified) return res.status(400).json({ error: 'User already verified' });
 
-    // Generate new verification token and set expiration
     const verificationToken = crypto.randomBytes(32).toString('hex');
     user.verificationToken = verificationToken;
-    user.verificationTokenExpires = new Date(Date.now() + 24 * 3600 * 1000); // 24 hours expiration
+    user.verificationTokenExpires = new Date(Date.now() + 24 * 3600 * 1000); // 24 hours
     await user.save();
 
-    // Send new verification email
     await sendVerificationEmail(user.email, verificationToken, {
       backendUrl: process.env.BACKEND_URL || 'http://localhost:5000',
       frontendUrl: FRONTEND_URL,
@@ -159,16 +169,27 @@ async function resendVerification(req, res, next) {
   }
 }
 
-// ME - current user
+// ME - current user (return user with profile embedded)
 async function me(req, res, next) {
   try {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: 'Not authenticated' });
 
-    const user = await User.findById(userId).select('-password -verificationToken -verificationTokenExpires');
+    // lean() to get a plain object we can safely attach profile to
+    const user = await User.findById(userId).select('-password -verificationToken -verificationTokenExpires').lean();
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    res.json({ user });
+    // fetch profile either by reference or by user field
+    let profile = null;
+    if (user.profile) {
+      profile = await Profile.findById(user.profile).lean().catch(() => null);
+    }
+    if (!profile) {
+      profile = await Profile.findOne({ user: userId }).lean().catch(() => null);
+    }
+
+    // embed profile on returned user object
+    return res.json({ user: Object.assign({}, user, { profile }) });
   } catch (err) {
     next(err);
   }

@@ -1,3 +1,4 @@
+// models/user.js
 const mongoose = require('mongoose');
 
 const UserSchema = new mongoose.Schema(
@@ -9,6 +10,9 @@ const UserSchema = new mongoose.Schema(
     isVerified: { type: Boolean, default: false },
     verificationToken: { type: String },
     verificationTokenExpires: { type: Date },  // Store token expiration time as Date
+
+    // one-to-one reference to Profile
+    profile: { type: mongoose.Schema.Types.ObjectId, ref: 'Profile', default: null },
   },
   { timestamps: true }
 );
