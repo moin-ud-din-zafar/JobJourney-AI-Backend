@@ -10,6 +10,7 @@ const morgan = require('morgan');
 const connectDB = require('./config/db');
 const authRoutes = require('./routes/authRoutes');
 const profileRoutes = require('./routes/profileRoutes');
+const jobRoutes = require('./routes/jobRoutes'); // NEW - job routes
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -56,6 +57,9 @@ console.log('Mounted /api/auth');
 
 app.use('/api/profile', profileRoutes);
 console.log('Mounted /api/profile (router attached)');
+
+app.use('/api/jobs', jobRoutes);
+console.log('Mounted /api/jobs (router attached)');
 
 /* --- helper: check if router has a path (best-effort) --- */
 function routerHasPath(router, routePath) {
@@ -120,6 +124,7 @@ function printRouterRoutes(mountPath, router) {
 
 printRouterRoutes('/api/auth', authRoutes);
 printRouterRoutes('/api/profile', profileRoutes);
+printRouterRoutes('/api/jobs', jobRoutes); // NEW - print jobs routes
 
 /* --- simple endpoint to view route list at runtime (best-effort) --- */
 app.get('/__routes', (req, res) => {
@@ -155,6 +160,7 @@ app.get('/__routes', (req, res) => {
   }
   collect('/api/auth', authRoutes);
   collect('/api/profile', profileRoutes);
+  collect('/api/jobs', jobRoutes); // NEW - include jobs
 
   res.json(routes);
 });
